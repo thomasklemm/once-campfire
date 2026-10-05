@@ -65,6 +65,20 @@ class MessageTest < ActiveSupport::TestCase
     assert_equal room.messages.ordered.first(Message::Pagination::PAGE_SIZE).map(&:id), room.messages.first_page.map(&:id)
   end
 
+  test "creating and destroying a message keeps rooms.messages_count in step" do
+    room = rooms(:designers)
+    Room.reset_counters(room.id, :messages)
+    room.reload
+
+    assert_difference -> { room.reload.messages_count }, +1 do
+      create_new_message_in room
+    end
+
+    assert_difference -> { room.reload.messages_count }, -1 do
+      room.messages.order(:id).last.destroy
+    end
+  end
+
   test "paged? tells whether a room has more than a page of messages without counting them all" do
     room = Rooms::Closed.create!(name: "Paging", creator: users(:david))
     Message.insert_all Array.new(Message::Pagination::PAGE_SIZE) { |i| { room_id: room.id, creator_id: users(:david).id, client_message_id: "paging-#{i}" } }
