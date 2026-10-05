@@ -1,8 +1,13 @@
 require "test_helper"
+require "active_record/testing/query_assertions"
 
 class Messages::ByBotsControllerTest < ActionDispatch::IntegrationTest
+  include ActiveRecord::Assertions::QueryAssertions
+
   setup do
     @room = rooms(:watercooler)
+    Room.reset_counters(@room.id, :messages)
+    @room.reload
   end
 
   test "create" do
@@ -100,6 +105,11 @@ class Messages::ByBotsControllerTest < ActionDispatch::IntegrationTest
     assert_equal Message::PAGE_SIZE, json.size
     assert_equal "41", response.headers["X-Total-Count"]
     assert_not_includes json.map { it["id"] }, messages(:fourth).id
+
+    assert_no_queries_match(/SELECT COUNT\(\*\).*FROM ["']?messages["']?/im) do
+      get room_bot_messages_url(@room, users(:bender).bot_key)
+    end
+    assert_equal "41", response.headers["X-Total-Count"]
 
     get response.headers["Link"][/<(.*)>/, 1]
     assert_response :success
