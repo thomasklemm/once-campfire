@@ -68,8 +68,8 @@ Rails.application.configure do
   # Don't log any deprecations.
   config.active_support.report_deprecations = false
 
-  # Cache in memory for now
-  config.cache_store = :redis_cache_store
+  # Replace the default in-process memory cache store with a durable alternative.
+  config.cache_store = :solid_cache_store
 
   # Assets are cacheable
   config.public_file_server.headers = {
