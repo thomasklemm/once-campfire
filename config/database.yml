@@ -27,6 +27,10 @@ test:
   primary:
     <<: *default
     database: storage/db/test.sqlite3
+  queue:
+    <<: *default
+    database: storage/db/test_queue.sqlite3
+    migrations_paths: db/queue_migrate
 
 performance:
   primary:
