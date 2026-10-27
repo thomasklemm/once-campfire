@@ -25,6 +25,57 @@ class MessagesHelperTest < ActionView::TestCase
     Rails.cache = previous_cache
   end
 
+  test "a message's fragment key changes with every row it presents, even when a write skips the timestamps" do
+    message = Message.create! room: rooms(:pets), body: "<div>Keyed by what it shows</div>", creator: users(:jason)
+    message.boosts.create! content: "Nice", booster: users(:david)
+    key = -> { view.message_fragment_cache_key(Message.with_presentation.find(message.id)) }
+
+    [
+      -> { Message.where(id: message.id).update_all(client_message_id: "edited elsewhere") },
+      -> { ActionText::RichText.where(record: message).update_all([ "body = ?", "<div>Edited elsewhere</div>" ]) },
+      -> { User.where(id: users(:jason).id).update_all(name: "Edited creator") },
+      -> { Room.where(id: rooms(:pets).id).update_all(name: "Edited room") },
+      -> { Boost.where(message: message).update_all(content: "Edited") },
+      -> { User.where(id: users(:david).id).update_all(name: "Edited booster") }
+    ].each_with_index do |edit, index|
+      before = key.call
+      edit.call
+      assert_not_equal before, key.call, "edit #{index} left the key as it was"
+    end
+  end
+
+  test "a body stored as bytes that aren't UTF-8 still gets a fragment key, a different one for different bytes" do
+    view.controller.stubs(:perform_caching).returns(true)
+    message = Message.create! room: rooms(:pets), body: "<div>Plain</div>", creator: users(:jason)
+    find = -> { Message.with_presentation.find(message.id) }
+
+    # Stored as another writer could: a blob, not text through Action Text's serializer.
+    ActionText::RichText.where(record: message).update_all("body = x'3c6469763e636166e93c2f6469763e'") # <div>caf\xE9</div>
+    first = view.message_fragment_cache_key(find.call)
+    assert view.message_run_fragment_cached?([ find.call ])
+
+    ActionText::RichText.where(record: message).update_all("body = x'3c6469763e636166e83c2f6469763e'") # <div>caf\xE8</div>
+    second = view.message_fragment_cache_key(find.call)
+    assert_not_equal first, second
+
+    ActionText::RichText.where(record: message).update_all("body = CAST(x'3c6469763e636166e83c2f6469763e' AS TEXT)")
+    assert view.message_run_fragment_cached?([ find.call ])
+    assert_equal second, view.message_fragment_cache_key(find.call)
+  end
+
+  test "a message whose stored body holds an attachment is rendered outside the shared fragment cache" do
+    view.controller.stubs(:perform_caching).returns(true)
+    message = Message.create! room: rooms(:pets), body: "<div>Plain</div>", creator: users(:jason)
+    cached = -> { view.message_run_fragment_cached?([ Message.with_presentation.find(message.id) ]) }
+    assert cached.call
+
+    # Written as SQL, as another writer would: a hash would go through Action Text's serializer first.
+    [ "action-text-attachment", "ACTION-TEXT-ATTACHMENT" ].each do |tag|
+      ActionText::RichText.where(record: message).update_all([ "body = ?", %(<div><#{tag} content-type="application/vnd.campfire.mention"></#{tag}></div>) ])
+      assert_not cached.call, "<#{tag}> was cached with the whole message"
+    end
+  end
+
   test "message_presentation neutralizes unsafe URI schemes in links" do
     message = Message.create! room: rooms(:pets), body: '<div><a href="javascript:alert(1)">x</a></div>', client_message_id: "0015", creator: users(:jason)
 

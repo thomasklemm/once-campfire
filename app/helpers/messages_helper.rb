@@ -100,15 +100,23 @@ module MessagesHelper
 
   def message_fragment_cache_key(message)
     # Read the inputs themselves, not updated_at: other SQL writers can change them without touching it.
-    dependencies = [ message.attributes, message.room.attributes.slice("id", "type", "name"),
-      message.creator.attributes.slice("id", "name", "bio", "updated_at"), message.body.body&.to_html,
-      message.boosts.sort_by(&:created_at).map { |boost| [ boost.attributes, boost.booster.attributes.slice("id", "name", "bio", "updated_at") ] } ]
+    # Stored values, as read from the database: casting them and parsing the body
+    # would cost every hit nearly as much as a render, and change nothing they say.
+    dependencies = [ message.attributes_before_type_cast, message.room.attributes_before_type_cast.slice("id", "type", "name"),
+      message.creator.attributes_before_type_cast.slice("id", "name", "bio", "updated_at"), stored_body(message)&.then { Digest::SHA256.hexdigest(it) },
+      message.boosts.sort_by(&:created_at).map { |boost| [ boost.attributes_before_type_cast, boost.booster.attributes_before_type_cast.slice("id", "name", "bio", "updated_at") ] } ]
     [ "message-presentation-v9", Digest::SHA256.hexdigest(ActiveSupport::JSON.encode(dependencies)) ]
   end
 
   private
     def message_fragment_cacheable?(message)
-      !message.room.direct? && !message.attachment? && !message.body.body&.to_html.to_s.include?("<action-text-attachment")
+      !message.room.direct? && !message.attachment? && !stored_body(message).to_s.match?(/<action-text-attachment/i)
+    end
+
+    # The rich text body as stored, without parsing it into Action Text content. As bytes:
+    # another writer may have stored ones that aren't UTF-8, which only the render repairs.
+    def stored_body(message)
+      message.rich_text_body&.read_attribute_before_type_cast(:body)&.b
     end
 
     def text_message_presentation(body, fragment_cached: false)
