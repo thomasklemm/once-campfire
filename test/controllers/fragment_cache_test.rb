@@ -49,6 +49,16 @@ class FragmentRenderingTest < ActionDispatch::IntegrationTest
     assert_not_includes hits.join, token
   end
 
+  test "a body another writer stored as text that isn't UTF-8 still renders its room" do
+    foreign_write("UPDATE action_text_rich_texts SET body = CAST(? AS TEXT) WHERE record_type = 'Message' AND record_id = ?",
+      SQLite3::Blob.new("<div>caf\xE9 written elsewhere</div>".b), @message.id)
+
+    get room_url(@room)
+    assert_response :success
+    get room_messages_url(@room)
+    assert_response :success
+  end
+
   test "native fragments remain fresh after foreign leaf writes" do
     get room_messages_url(@room)
     assert_response :success
